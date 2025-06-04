@@ -35,6 +35,7 @@ public class RestServerUtils {
         throw statusCodeToException(res.error());
     }
 
+
     static WebApplicationException statusCodeToException(Result.ErrorCode err) {
         Response.Status status = switch (err) {
             case CONFLICT -> CONFLICT;

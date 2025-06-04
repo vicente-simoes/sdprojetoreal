@@ -37,7 +37,7 @@ USERS_GRPC_EXTRA_ARGS=<eventais parâmetros adicionais a passar ao servidor User
 IMAGE_GRPC_EXTRA_ARGS=<eventais parâmetros adicionais a passar ao servidor Image GRPC>
 CONTENT_GRPC_EXTRA_ARGS=<eventais parâmetros adicionais a passar ao servidor Content GRPC>
 
-CONTENT_REP_SERVER_MAINCLASS=<classe main do servidor Content replicado>,
-CONTENT_REP_PORT=<porto do servidor Content replicado>,
+CONTENT_REP_SERVER_MAINCLASS=server.rest.RestContentsServer
+CONTENT_REP_PORT=9000
 CONTENT_REP_EXTRA_ARGS_FIRST=<eventais parâmetros adicionais a passar ao servidor Content replicado que iniciará como primário, se aplicável>
 CONTENT_REP_EXTRA_ARGS_OTHER=<eventais parâmetros adicionais a passar aos servidores Content replicado secundários, se aplicável>

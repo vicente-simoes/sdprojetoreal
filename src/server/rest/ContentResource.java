@@ -1,13 +1,14 @@
 package server.rest;
 
 import api.Post;
+import api.java.Result;
 import api.rest.RestContent;
 import impl.JavaContent;
 import client.ImageClient;
 import client.UsersClient;
-import jakarta.ws.rs.core.Context;
-import jakarta.ws.rs.core.UriBuilder;
-import jakarta.ws.rs.core.UriInfo;
+import impl.kafka.utils.SyncPoint;
+import jakarta.ws.rs.WebApplicationException;
+import jakarta.ws.rs.core.*;
 import network.DataModelAdaptor;
 
 import java.net.URI;
@@ -30,9 +31,10 @@ public class ContentResource implements RestContent {
     }
 
     @Override
-    public String createPost(Post post, String userPassword) {
+    public Response createPost(long version, Post post, String userPassword) {
         hideParentUrl(post);
-        return wrapResult(contents.createPost(post, userPassword));
+        Result<String> res = contents.createPost(post, userPassword);
+        return getResponse(res);
     }
 
     private static void hideParentUrl(Post post) {
@@ -42,19 +44,26 @@ public class ContentResource implements RestContent {
     }
 
     @Override
-    public List<String> getPosts(long timestamp, String sortOrder) {
-        return wrapResult(contents.getPosts(timestamp, sortOrder));
+    public Response getPosts(long version, long timestamp, String sortOrder) {
+        Result<List<String>> res = contents.getPosts(timestamp, sortOrder);
+        return getResponse(res);
     }
 
     @Override
-    public Post getPost(String postId) {
+    public Response getPost(long version, String postId) {
         var res = contents.getPost(postId);
-        if (res.isOK()) {
-            var post = res.value();
-            incorporateParentUrl(post);
-            return post;
+        if (!res.isOK()) {
+            throw new WebApplicationException(Response.status(statusCodeToException(res.error()).getResponse().getStatus())
+                    .header(HEADER_VERSION, SyncPoint.getSyncPoint().getVersion()).build());
         }
-        throw statusCodeToException(res.error());
+        var post = res.value();
+        incorporateParentUrl(post);
+
+        return Response.ok()
+                .header(HEADER_VERSION, SyncPoint.getSyncPoint().getVersion())
+                .encoding(MediaType.APPLICATION_JSON)
+                .entity(res.value())
+                .build();
     }
 
     private void incorporateParentUrl(Post post) {
@@ -66,58 +75,81 @@ public class ContentResource implements RestContent {
     }
 
     @Override
-    public List<String> getPostAnswers(String postId, long maxTimeout) {
-        return wrapResult(contents.getPostAnswers(postId, maxTimeout));
+    public Response getPostAnswers(long version, String postId, long maxTimeout) {
+        var res = contents.getPostAnswers(postId, maxTimeout);
+        return getResponse(res);
     }
 
     @Override
-    public Post updatePost(String postId, String userPassword, Post post) {
-        return wrapResult(contents.updatePost(postId, userPassword, post));
+    public Response updatePost(long version, String postId, String userPassword, Post post) {
+        var res = contents.updatePost(postId, userPassword, post);
+        return getResponse(res);
     }
 
     @Override
-    public void deletePost(String postId, String userPassword) {
-        wrapResult(contents.deletePost(postId, userPassword));
+    public Response deletePost(long version, String postId, String userPassword) {
+        var res = contents.deletePost(postId, userPassword);
+        return getResponse(res);
     }
 
     @Override
-    public void upVotePost(String postId, String userId, String userPassword) {
-        wrapResult(contents.upVotePost(postId, userId, userPassword));
+    public Response upVotePost(long version, String postId, String userId, String userPassword) {
+        var res = contents.upVotePost(postId, userId, userPassword);
+        return getResponse(res);
     }
 
     @Override
-    public void removeUpVotePost(String postId, String userId, String userPassword) {
-        wrapResult(contents.removeUpVotePost(postId, userId, userPassword));
+    public Response removeUpVotePost(long version, String postId, String userId, String userPassword) {
+        var res = contents.removeUpVotePost(postId, userId, userPassword);
+        return getResponse(res);
     }
 
     @Override
-    public void downVotePost(String postId, String userId, String userPassword) {
-        wrapResult(contents.downVotePost(postId, userId, userPassword));
+    public Response downVotePost(long version, String postId, String userId, String userPassword) {
+        var res = contents.downVotePost(postId, userId, userPassword);
+        return getResponse(res);
     }
 
     @Override
-    public void removeDownVotePost(String postId, String userId, String userPassword) {
-        wrapResult(contents.removeDownVotePost(postId, userId, userPassword));
+    public Response removeDownVotePost(long version, String postId, String userId, String userPassword) {
+        var res = contents.removeDownVotePost(postId, userId, userPassword);
+        return getResponse(res);
     }
 
     @Override
-    public Integer getupVotes(String postId) {
-        return wrapResult(contents.getupVotes(postId));
+    public Response getupVotes(long version, String postId) {
+        var res = contents.getupVotes(postId);
+        return getResponse(res);
     }
 
     @Override
-    public Integer getDownVotes(String postId) {
-        return wrapResult(contents.getDownVotes(postId));
+    public Response getDownVotes(long version, String postId) {
+        var res = contents.getDownVotes(postId);
+        return getResponse(res);
     }
 
     @Override
-    public void forgetUser(String uid) {
-        wrapResult(contents.forgetUser(uid));
+    public Response forgetUser(long version, String uid) {
+        var res = contents.forgetUser(uid);
+        return getResponse(res);
     }
 
     @Override
-    public List<String> getPostsByImage(String mediaUrl) {
-        return wrapResult(contents.getPostsByImage(mediaUrl));
+    public Response getPostsByImage(long version, String mediaUrl) {
+        var res = contents.getPostsByImage(mediaUrl);
+        return getResponse(res);
+    }
+
+    private Response getResponse(Result<?> res) {
+        if (!res.isOK()) {
+            throw new WebApplicationException(Response.status(statusCodeToException(res.error()).getResponse().getStatus())
+                    .header(HEADER_VERSION, SyncPoint.getSyncPoint().getVersion()).build());
+        }
+        return Response.ok()
+                .header(HEADER_VERSION, SyncPoint.getSyncPoint().getVersion())
+                .encoding(MediaType.APPLICATION_JSON)
+                .entity(res.value())
+                .build();
     }
 }
 

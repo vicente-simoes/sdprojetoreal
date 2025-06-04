@@ -40,9 +40,12 @@ public class JavaContent implements Content, RecordProcessor {
 
     private KafkaPublisher publisher;
 
-    private KafkaSubscriber subscriber;
+    private KafkaSubscriber imageSubscriber;
+    private KafkaSubscriber replicationSubscriber;
 
     private static final String TOPIC_B = "image-reference-events";
+
+    private volatile long lastCommittedKafkaOffset = 0;
 
     private static final ConcurrentMap<String, Object> barriers = new ConcurrentHashMap<>();
 
@@ -50,7 +53,7 @@ public class JavaContent implements Content, RecordProcessor {
         //startImageDeletionPublisher();
         KafkaUtils.createTopic(TOPIC_B); // Novo tópico
         this.publisher = KafkaPublisher.createPublisher("kafka:9092");
-        startImageDeletionListener();
+        startKafkaListener();
     }
 
     public void setUsers(Users users) {
@@ -59,6 +62,10 @@ public class JavaContent implements Content, RecordProcessor {
 
     public void setImages(Image images) {
         this.images = images;
+    }
+
+    public long getLastCommittedKafkaOffset() {
+        return lastCommittedKafkaOffset;
     }
 
     @Override
@@ -77,11 +84,21 @@ public class JavaContent implements Content, RecordProcessor {
         db.persist(p);
         if (p.getMediaUrl() != null && !p.getMediaUrl().isEmpty()) {
             // Envia evento de INCREMENTO
-            publisher.publish("image-reference-events", p.getMediaUrl(), "INCREMENT"); // Alterado aqui
+            long offset = publisher.publish("image-reference-events", p.getMediaUrl(), "INCREMENT"); // Alterado aqui
+            lastCommittedKafkaOffset = offset;
             log.info("Sent INCREMENT event for image: %s".formatted(p.getMediaUrl()));
         }
         if (p.getParentUrl() != null)
             notifyGetPostAnswers(p.getParentUrl());
+
+        // Publish replication event
+        String replicationMessage = "CREATE_POST&&&%s&&&%s&&&%d&&&%s&&&%s&&&%s&&&%d&&&%d".formatted(
+                pid, p.getAuthorId(), p.getCreationTimestamp(), p.getContent(),
+                p.getMediaUrl() , p.getParentUrl(), p.getUpVote(), p.getDownVote());
+        long offset = publisher.publish("replication-update-event", pid, replicationMessage);
+        lastCommittedKafkaOffset = offset;
+        log.info("Published replication event for post creation: %s".formatted(replicationMessage + "\n"));
+
         return ok(pid);
     }
 
@@ -514,16 +531,32 @@ public class JavaContent implements Content, RecordProcessor {
         return ok(posts);
     }
 
-    public void startImageDeletionListener() {
-        this.subscriber = KafkaSubscriber.createSubscriber("kafka:9092", List.of("image-deletion-events-2"));
-        subscriber.start(this);
+    public void startKafkaListener() {
+        this.imageSubscriber = KafkaSubscriber.createSubscriber("kafka:9092", List.of("image-deletion-events-2"));
+        imageSubscriber.start(this);
+        this.replicationSubscriber = KafkaSubscriber.createSubscriber("kafka:9092", List.of("replication-update-event"));
+        replicationSubscriber.start(this);
     }
 
     @Override
     public void onReceive(ConsumerRecord<String, String> r) {
-        log.info("Received image deletion event: %s -> %s".formatted(r.key(), r.value()));
+        String topic = r.topic();
+        switch (topic) {
+            case "image-deletion-events-2" -> {
+                handleImageDeletionEvent(r);
+            }
+            case "replication-update-event" -> {
+                handleReplicationUpdateEvent(r);
+            }
+            default -> log.warning("Received unknown topic: %s".formatted(topic));
+        }
+        this.lastCommittedKafkaOffset = r.offset();
+    }
+
+    private void handleImageDeletionEvent(ConsumerRecord<String, String> r) {
         String iid = r.key();
         long deletionTimestamp = Long.parseLong(r.value());
+        log.info("Handling image deletion event for image ID: %s at timestamp: %d".formatted(iid, deletionTimestamp));
         removeMediaFromPosts(iid);
     }
 
@@ -552,8 +585,47 @@ public class JavaContent implements Content, RecordProcessor {
         }
     }
 
-    /*public void startImageDeletionPublisher() {
-        KafkaUtils.createTopic("image-deletion-events");
-        this.publisher = KafkaPublisher.createPublisher("kafka:9092");
-    }*/
+    private void handleReplicationUpdateEvent(ConsumerRecord<String, String> r) {
+        log.info("Received replication update event: %s -> %s".formatted(r.key(), r.value()));
+        String postId = r.key();
+        String message = r.value();
+        String [] parts = message.split("&&&");
+        String operation = parts[0];
+        switch (operation) {
+            case "CREATE_POST" -> {
+                //String postId = parts[1]; ja vem na key
+                String authorId = parts[2];
+                long creationTimestamp = Long.parseLong(parts[3]);
+                String content = parts[4];
+                String mediaUrl = parts[5];
+                String parentUrl = parts[6];
+                int upVote = Integer.parseInt(parts[7]);
+                int downVote = Integer.parseInt(parts[8]);
+                Post post = new Post(postId, authorId, creationTimestamp, content, mediaUrl, parentUrl, upVote, downVote);
+
+                db.persist(post);
+                if (post.getParentUrl() != null)
+                    notifyGetPostAnswers(post.getParentUrl());
+            }
+            case "UPDATE_POST" -> {
+
+            }
+            case "DELETE_POST" -> {
+
+            }
+            case "UPVOTE_POST" -> {
+
+            }
+            case "REMOVE_UPVOTE_POST" -> {
+
+            }
+            case "DOWNVOTE_POST" -> {
+
+            }
+            case "REMOVE_DOWNVOTE_POST" -> {
+
+            }
+            default -> log.warning("Unknown operation in replication update event: %s".formatted(operation));
+        }
+    }
 }

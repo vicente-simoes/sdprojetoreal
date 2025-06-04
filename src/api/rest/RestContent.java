@@ -3,19 +3,14 @@ package api.rest;
 import java.util.List;
 
 import api.Post;
-import jakarta.ws.rs.Consumes;
-import jakarta.ws.rs.DELETE;
-import jakarta.ws.rs.GET;
-import jakarta.ws.rs.POST;
-import jakarta.ws.rs.PUT;
-import jakarta.ws.rs.Path;
-import jakarta.ws.rs.PathParam;
-import jakarta.ws.rs.Produces;
-import jakarta.ws.rs.QueryParam;
+import jakarta.ws.rs.*;
 import jakarta.ws.rs.core.MediaType;
+import jakarta.ws.rs.core.Response;
 
 @Path(RestContent.PATH)
 public interface RestContent {
+
+	public final static String HEADER_VERSION = "X-FCTREDDIT-VERSION";
 
 	String PATH = "/posts";
 	String PASSWORD = "pwd";
@@ -54,7 +49,7 @@ public interface RestContent {
 	@POST
 	@Consumes(MediaType.APPLICATION_JSON)
 	@Produces(MediaType.APPLICATION_JSON)
-    String createPost(Post post, @QueryParam(PASSWORD) String userPassword);
+	Response createPost(@HeaderParam(HEADER_VERSION)long version, Post post, @QueryParam(PASSWORD) String userPassword);
 	
 	/**
 	 * Retrieves a list with all top-level Posts unique identifiers (i.e., Posts that have no parent Post).
@@ -73,7 +68,7 @@ public interface RestContent {
 	 */
 	@GET
 	@Produces(MediaType.APPLICATION_JSON)
-    List<String> getPosts(@QueryParam(TIMESTAMP) long timestamp, @QueryParam(SORTBY) String sortOrder);
+    Response getPosts(@HeaderParam(HEADER_VERSION)long version, @QueryParam(TIMESTAMP) long timestamp, @QueryParam(SORTBY) String sortOrder);
 	
 	/**
 	 * Retrieves a given post.
@@ -85,7 +80,7 @@ public interface RestContent {
 	@GET
 	@Path("{" + POSTID + "}")
 	@Produces(MediaType.APPLICATION_JSON)
-    Post getPost(@PathParam(POSTID) String postId);
+	Response getPost(@HeaderParam(HEADER_VERSION)long version, @PathParam(POSTID) String postId);
 
 	/**
 	 * Retrieves a list with all unique identifiers of posts that have the post
@@ -103,7 +98,7 @@ public interface RestContent {
 	@GET
 	@Path("{" + POSTID + "}/" + REPLIES)
 	@Produces(MediaType.APPLICATION_JSON)
-	public List<String> getPostAnswers(@PathParam(POSTID) String postId, @QueryParam(TIMEOUT) long timeout);
+	public Response getPostAnswers(@HeaderParam(HEADER_VERSION)long version, @PathParam(POSTID) String postId, @QueryParam(TIMEOUT) long timeout);
 	
 	/**
 	 * Updates the contents of a post restricted to the fields:
@@ -122,7 +117,7 @@ public interface RestContent {
 	@Path("{" + POSTID + "}")
 	@Consumes(MediaType.APPLICATION_JSON)
 	@Produces(MediaType.APPLICATION_JSON)
-    Post updatePost(@PathParam(POSTID) String postId, @QueryParam(PASSWORD) String userPassword, Post post);
+	Response updatePost(@HeaderParam(HEADER_VERSION)long version, @PathParam(POSTID) String postId, @QueryParam(PASSWORD) String userPassword, Post post);
 	
 	/**
 	 * Deletes a given Post, only the author of the Post can do this operation. A successful delete will also remove
@@ -136,7 +131,7 @@ public interface RestContent {
 	 */	
 	@DELETE
 	@Path("{" + POSTID + "}")
-    void deletePost(@PathParam(POSTID) String postId, @QueryParam(PASSWORD) String userPassword);
+	Response deletePost(@HeaderParam(HEADER_VERSION)long version, @PathParam(POSTID) String postId, @QueryParam(PASSWORD) String userPassword);
 	
 	/**
 	 * Adds an upvote to a given post made by a specific user (might be different from the author
@@ -154,7 +149,7 @@ public interface RestContent {
 	 */
 	@POST
 	@Path("{" + POSTID + "}/" + UPVOTE + "/{" + USERID + "}" )
-    void upVotePost(@PathParam(POSTID) String postId, @PathParam(USERID) String userId, @QueryParam(PASSWORD) String userPassword);
+	Response upVotePost(@HeaderParam(HEADER_VERSION)long version, @PathParam(POSTID) String postId, @PathParam(USERID) String userId, @QueryParam(PASSWORD) String userPassword);
 	
 	/**
 	 * Removes a previously added upvote to a given post made by a specific user (might be different from the author
@@ -170,7 +165,7 @@ public interface RestContent {
 	 */
 	@DELETE
 	@Path("{" + POSTID + "}/" + UPVOTE + "/{" + USERID + "}" )
-    void removeUpVotePost(@PathParam(POSTID) String postId, @PathParam(USERID) String userId, @QueryParam(PASSWORD) String userPassword);
+	Response removeUpVotePost(@HeaderParam(HEADER_VERSION)long version, @PathParam(POSTID) String postId, @PathParam(USERID) String userId, @QueryParam(PASSWORD) String userPassword);
 	
 	/**
 	 * Adds an downvote to a given post made by a specific user (might be different from the author
@@ -188,7 +183,7 @@ public interface RestContent {
 	 */
 	@POST
 	@Path("{" + POSTID + "}/" + DOWNVOTE  + "/{" + USERID + "}" )
-    void downVotePost(@PathParam(POSTID) String postId, @PathParam(USERID) String userId, @QueryParam(PASSWORD) String userPassword);
+	Response downVotePost(@HeaderParam(HEADER_VERSION)long version, @PathParam(POSTID) String postId, @PathParam(USERID) String userId, @QueryParam(PASSWORD) String userPassword);
 	
 	/**
 	 * Removes a previously added downvote to a given post made by a specific user (might be different from the author
@@ -204,7 +199,7 @@ public interface RestContent {
 	 */
 	@DELETE
 	@Path("{" + POSTID + "}/" + DOWNVOTE + "/{" + USERID + "}" )
-    void removeDownVotePost(@PathParam(POSTID) String postId, @PathParam(USERID) String userId, @QueryParam(PASSWORD) String userPassword);
+	Response removeDownVotePost(@HeaderParam(HEADER_VERSION)long version, @PathParam(POSTID) String postId, @PathParam(USERID) String userId, @QueryParam(PASSWORD) String userPassword);
 	
 	/**
 	 * Exposes the number of upvotes currently associated with a given post
@@ -214,7 +209,7 @@ public interface RestContent {
 	 */
 	@GET
 	@Path("{" + POSTID + "}/" + UPVOTE)
-    Integer getupVotes(@PathParam(POSTID) String postId);
+	Response getupVotes(@HeaderParam(HEADER_VERSION)long version, @PathParam(POSTID) String postId);
 	
 	/**
 	 * Exposes the number of downvotes currently associated with a given post
@@ -224,7 +219,7 @@ public interface RestContent {
 	 */
 	@GET
 	@Path("{" + POSTID + "}/" + DOWNVOTE)
-    Integer getDownVotes(@PathParam(POSTID) String postId);
+	Response getDownVotes(@HeaderParam(HEADER_VERSION)long version, @PathParam(POSTID) String postId);
 
 	/**
 	 * Removes all information about a user.
@@ -233,7 +228,7 @@ public interface RestContent {
 	 */
 	@DELETE
 	@Path(FORGET + "/{" + USERID + "}")
-	void forgetUser(@PathParam(USERID) String uid);
+	Response forgetUser(@HeaderParam(HEADER_VERSION)long version, @PathParam(USERID) String uid);
 
 	/**
 	 * Retrieves a list of post identifiers that have the provided mediaUrl as their mediaUrl.
@@ -245,6 +240,6 @@ public interface RestContent {
 	@GET
 	@Path("imageUrl/{" + MEDIA_URL + "}")
 	@Produces(MediaType.APPLICATION_JSON)
-	List<String> getPostsByImage(@PathParam(MEDIA_URL) String mediaUrl);
+	Response getPostsByImage(@HeaderParam(HEADER_VERSION)long version, @PathParam(MEDIA_URL) String mediaUrl);
 
 }

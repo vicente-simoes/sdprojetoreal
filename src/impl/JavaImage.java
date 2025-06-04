@@ -257,6 +257,17 @@ public class JavaImage implements Image, RecordProcessor {
 
     @Override
     public void onReceive(ConsumerRecord<String, String> r) {
+        String topic = r.topic();
+        switch (topic) {
+            case "image-reference-events" -> {
+                processImageReferenceEvent(r);
+            }
+            default -> log.warning("Unknown topic: %s".formatted(topic));
+        }
+
+    }
+
+    private void processImageReferenceEvent(ConsumerRecord<String, String> r) {
         log.info("Received image reference event: %s -> %s".formatted(r.key(), r.value())); //
         String mediaUrlFromKafka = r.key(); // key é a mediaUrl completa do Content service
         String eventType = r.value(); // value é "INCREMENT" ou "DECREMENT"
