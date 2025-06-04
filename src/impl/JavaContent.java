@@ -42,10 +42,14 @@ public class JavaContent implements Content, RecordProcessor {
 
     private KafkaSubscriber subscriber;
 
+    private static final String TOPIC_B = "image-reference-events";
+
     private static final ConcurrentMap<String, Object> barriers = new ConcurrentHashMap<>();
 
     public JavaContent() {
-        startImageDeletionPublisher();
+        //startImageDeletionPublisher();
+        KafkaUtils.createTopic(TOPIC_B); // Novo tópico
+        this.publisher = KafkaPublisher.createPublisher("kafka:9092");
         startImageDeletionListener();
     }
 
@@ -71,6 +75,11 @@ public class JavaContent implements Content, RecordProcessor {
         p.setPostId(pid);
         p.setCreationTimestamp(System.currentTimeMillis());
         db.persist(p);
+        if (p.getMediaUrl() != null && !p.getMediaUrl().isEmpty()) {
+            // Envia evento de INCREMENTO
+            publisher.publish("image-reference-events", p.getMediaUrl(), "INCREMENT"); // Alterado aqui
+            log.info("Sent INCREMENT event for image: %s".formatted(p.getMediaUrl()));
+        }
         if (p.getParentUrl() != null)
             notifyGetPostAnswers(p.getParentUrl());
         return ok(pid);
@@ -208,6 +217,13 @@ public class JavaContent implements Content, RecordProcessor {
         var uRes = users.getUser(p.getAuthorId(), pwd);
         if (!uRes.isOK())
             return error(uRes.error());
+        if (updatedFields.getMediaUrl() == null || updatedFields.getMediaUrl().isEmpty()) {
+            publisher.publish(TOPIC_B, p.getMediaUrl(), "DECREMENT"); // Envia evento de DECREMENTO
+        } else {
+            publisher.publish(TOPIC_B, p.getMediaUrl(), "DECREMENT"); // Envia evento de INCREMENTO
+            publisher.publish(TOPIC_B, updatedFields.getMediaUrl(), "INCREMENT");
+        }
+
         return db.execTransaction(s -> updatePostTx(pid, updatedFields, s));
     }
 
@@ -260,6 +276,12 @@ public class JavaContent implements Content, RecordProcessor {
             return error(dRes.error());
         var deletedIds = dRes.value();
         deleteAllVotes(deletedIds);
+        String mediaUrl = p.getMediaUrl();
+        if (mediaUrl != null && !mediaUrl.isEmpty()) {
+            // Envia evento de DECREMENTO
+            publisher.publish(TOPIC_B, mediaUrl, "DECREMENT"); // Alterado aqui
+            log.info("Sent DECREMENT event for image: %s".formatted(mediaUrl));
+        }
         return tryToDeletePostMedia(p);
     }
 
@@ -317,13 +339,13 @@ public class JavaContent implements Content, RecordProcessor {
         var mediaUrl = p.getMediaUrl();
         var iid = extractIdFromUrl(p.getMediaUrl());
         var timestamp = System.currentTimeMillis();
-        List<String> posts = getPostsByImage(iid).value();
+        /*List<String> posts = getPostsByImage(iid).value();
         if (posts.isEmpty()) {
             log.info("No posts found with media URL: %s".formatted(mediaUrl));
             publisher.publish("image-deletion-events", mediaUrl, String.valueOf(timestamp));
         } else {
             log.info("Posts found with media URL: %s, not deleting image.".formatted(iid));
-        }
+        }*/
         return ok(); //images.deleteImageUponUserOrPostRemoval(p.getAuthorId(), iid);
     }
 
@@ -530,8 +552,8 @@ public class JavaContent implements Content, RecordProcessor {
         }
     }
 
-    public void startImageDeletionPublisher() {
+    /*public void startImageDeletionPublisher() {
         KafkaUtils.createTopic("image-deletion-events");
         this.publisher = KafkaPublisher.createPublisher("kafka:9092");
-    }
+    }*/
 }

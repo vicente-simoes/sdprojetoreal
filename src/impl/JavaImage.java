@@ -22,8 +22,11 @@ import java.net.URI;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
+import java.util.Iterator;
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
+import java.util.concurrent.*;
 import java.util.concurrent.locks.ReadWriteLock;
 import java.util.concurrent.locks.ReentrantReadWriteLock;
 import java.util.logging.Logger;
@@ -45,6 +48,12 @@ public class JavaImage implements Image, RecordProcessor {
 
     private KafkaSubscriber subscriber;
 
+    private static final long DELETION_INTERVAL_SECONDS = 15;
+    private static final long DELETION_GRACE_PERIOD_MILLIS = 30 * 1000; // 30 segundos
+    private final ScheduledExecutorService scheduler = Executors.newScheduledThreadPool(1);
+
+    private final ConcurrentMap<String, ImageCounterInfo> imageReferenceCounts = new ConcurrentHashMap<>();
+
     private final ReadWriteLock lock = new ReentrantReadWriteLock();
 
     public JavaImage() {
@@ -53,7 +62,8 @@ public class JavaImage implements Image, RecordProcessor {
         if (users == null)
             log.info("Users service not set, using default implementation.");
         startImageDeletionPublisher();
-        startImageDeletionListener();
+        startImageReferenceListener();
+        startDeletionScheduler();
         try {
             Files.createDirectories(Paths.get(IMAGES_DIR));
         } catch (IOException e) {
@@ -69,13 +79,6 @@ public class JavaImage implements Image, RecordProcessor {
         this.content = content;
     }
 
-    public void setPublisher(KafkaPublisher publisher) {
-        this.publisher = publisher;
-    }
-
-    public void setSubscriber(KafkaSubscriber subscriber) {
-        this.subscriber = subscriber;
-    }
 
     @Override
     public Result<String> createImage(String uid, byte[] content, String pwd) {
@@ -89,6 +92,21 @@ public class JavaImage implements Image, RecordProcessor {
         var path = Paths.get(IMAGES_DIR, uid, iid);
         createPathDirectories(uid);
         storeImage(path, content);
+
+        // --- NOVA LÓGICA AQUI ---
+        String mediaUrl = UriBuilder.fromUri(uid).path(iid).build().toASCIIString(); // Reconstroi a mediaUrl como o Content a usaria
+        String keyName = String.format("%s/%s", uid, iid); // A chave que usas no teu mapa
+
+        lock.writeLock().lock();
+        try {
+            // Adiciona a imagem ao mapa com contagem 0 e timestamp de criação
+            imageReferenceCounts.put(keyName, new ImageCounterInfo(0, System.currentTimeMillis()));
+            log.info("Image created and added to reference counts with 0 references: %s".formatted(keyName));
+        } finally {
+            lock.writeLock().unlock();
+        }
+        // --- FIM DA NOVA LÓGICA ---
+
         return ok(UriBuilder.fromUri(uid).path(iid).build().toASCIIString());
     }
 
@@ -239,17 +257,100 @@ public class JavaImage implements Image, RecordProcessor {
 
     @Override
     public void onReceive(ConsumerRecord<String, String> r) {
-        log.info("Received image deletion event: %s -> %s".formatted(r.key(), r.value()));
-        String mediaUrl = r.key();
-        long deletionTimestamp = Long.parseLong(r.value());
-        String iid = mediaUrl.split("/")[mediaUrl.split("/").length - 1];
-        String uid = mediaUrl.split("/")[mediaUrl.split("/").length - 2];
-        Path path = Paths.get(IMAGES_DIR, uid, iid);
-        deleteValidImg(path);
+        log.info("Received image reference event: %s -> %s".formatted(r.key(), r.value())); //
+        String mediaUrlFromKafka = r.key(); // key é a mediaUrl completa do Content service
+        String eventType = r.value(); // value é "INCREMENT" ou "DECREMENT"
+
+        String[] parts = mediaUrlFromKafka.split("/");
+        // Ajustar a extração de uid/iid da mediaUrl completa do Content
+        // Assumindo formato: http://<ip>:<port>/images/media/<userId>/<imageId>
+        String userId = parts[parts.length - 2]; //
+        String imageId = parts[parts.length - 1]; //
+        String keyName = String.format("%s/%s", userId, imageId); // A chave interna do teu mapa
+
+        if (imageId == null || imageId.isEmpty()) {
+            log.warning("Received event with invalid mediaUrl key: " + mediaUrlFromKafka);
+            return;
+        }
+
+        lock.writeLock().lock();
+        try {
+            imageReferenceCounts.compute(keyName, (key, info) -> {
+                long currentTimestamp = System.currentTimeMillis();
+                if (info == null) {
+                    // Esta imagem não estava no mapa (provavelmente criada noutra instância do Image ou referência inicial)
+                    info = new ImageCounterInfo(0, currentTimestamp);
+                    log.info("First reference event for new image %s. Initializing count.".formatted(keyName));
+                }
+
+                if ("INCREMENT".equals(eventType)) {
+                    info.increment();
+                    log.info("Incrementing count for image %s: %d -> %d".formatted(imageId, info.getCount() - 1, info.getCount()));
+                } else if ("DECREMENT".equals(eventType)) {
+                    info.decrement();
+                    log.info("Decrementing count for image %s: %d -> %d".formatted(imageId, info.getCount() + 1, info.getCount()));
+                } else {
+                    log.warning("Unknown event type: %s for image %s".formatted(eventType, imageId));
+                }
+                return info;
+            });
+        } finally {
+            lock.writeLock().unlock();
+        }
     }
 
-    public void startImageDeletionListener() {
-        this.subscriber = KafkaSubscriber.createSubscriber("kafka:9092", List.of("image-deletion-events"));
-        subscriber.start(this);
+    public void startImageReferenceListener() {
+        this.subscriber = KafkaSubscriber.createSubscriber("kafka:9092", List.of("image-reference-events")); // NOVO TÓPICO
+        subscriber.start(this); // O próprio JavaImage agora é o RecordProcessor
+    }
+
+    private void startDeletionScheduler() {
+        scheduler.scheduleAtFixedRate(() -> {
+            log.info("Running scheduled image deletion task...");
+            long currentTime = System.currentTimeMillis();
+            lock.writeLock().lock(); // Proteger acesso ao mapa e aos ficheiros
+            try {
+                Iterator<Map.Entry<String, ImageCounterInfo>> iterator = imageReferenceCounts.entrySet().iterator();
+                while (iterator.hasNext()) {
+                    Map.Entry<String, ImageCounterInfo> entry = iterator.next();
+                    String uidANDiid = entry.getKey();
+                    ImageCounterInfo info = entry.getValue();
+
+                    if (info.getCount() == 0 && (currentTime - info.getCreationTimestamp()) > DELETION_GRACE_PERIOD_MILLIS) {
+                        log.info("Image %s has 0 references and grace period passed, attempting deletion.".formatted(uidANDiid));
+                        String iid = uidANDiid.split("/")[1];
+                        String uid = uidANDiid.split("/")[0];
+                        Path path = Paths.get(IMAGES_DIR, uid, iid);
+
+                        try {
+                            deleteValidImg(path);
+                            iterator.remove(); // Remove do mapa após apagar
+                            log.info("Image %s deleted from file system and removed from counts.".formatted(iid));
+                        } catch (Exception e) {
+                            log.severe("Failed to delete image %s: %s".formatted(iid, e.getMessage()));
+                        }
+                    } else if (info.getCount() == 0) {
+                        log.info("Image %s has 0 references but grace period not yet passed (%dms remaining).".formatted(uidANDiid, DELETION_GRACE_PERIOD_MILLIS - (currentTime - info.getCreationTimestamp())));
+                    }
+                }
+            } finally {
+                lock.writeLock().unlock();
+            }
+        }, 0, DELETION_INTERVAL_SECONDS, TimeUnit.SECONDS);
+    }
+
+    // Adicionar um metodo para parar o scheduler quando o serviço Image for encerrado (importante para shutdown limpo)
+    public void stopScheduler() {
+        if (scheduler != null && !scheduler.isShutdown()) {
+            scheduler.shutdown();
+            try {
+                if (!scheduler.awaitTermination(5, TimeUnit.SECONDS)) {
+                    scheduler.shutdownNow();
+                }
+            } catch (InterruptedException e) {
+                scheduler.shutdownNow();
+                Thread.currentThread().interrupt();
+            }
+        }
     }
 }
